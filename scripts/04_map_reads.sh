@@ -20,10 +20,10 @@ set -euo pipefail
 #   SAMPLE_trimmed.fq
 #
 # Usage:
-#   bash scripts/05_map_reads_bowtie2.sh <reference_fasta> <input_dir> <output_dir> [threads] [index_prefix]
+#   bash scripts/04_map_reads.sh <reference_fasta> <input_dir> <output_dir> [threads] [index_prefix]
 #
 # Examples:
-#   bash scripts/05_map_reads_bowtie2.sh data/reference/GCF_000146045.2_R64_genomic.fna results/trimmed results/mapping 10 R64
+#   bash scripts/04_map_reads.sh data/reference/GCF_000146045.2_R64_genomic.fna results/trimmed results/mapping 10 R64
 #
 # Default:
 #   threads      = 10
@@ -54,10 +54,10 @@ UIDGID="$(id -u):$(id -g)"
 usage() {
   cat << EOF
 Usage:
-  bash scripts/05_map_reads_bowtie2.sh <reference_fasta> <input_dir> <output_dir> [threads] [index_prefix]
+  bash scripts/04_map_reads.sh <reference_fasta> <input_dir> <output_dir> [threads] [index_prefix]
 
 Example:
-  bash scripts/05_map_reads_bowtie2.sh data/reference/GCF_000146045.2_R64_genomic.fna results/trimmed results/mapping 10 R64
+  bash scripts/04_map_reads.sh data/reference/GCF_000146045.2_R64_genomic.fna results/trimmed results/mapping 10 R64
 EOF
 }
 
