@@ -36,12 +36,12 @@ set -euo pipefail
 #   09_summary/
 #
 # Usage:
-#   bash scripts/06_process_sam_bam.sh -d <sam_directory> -t <threads> -m <PE|SE|BOTH> [options]
+#   bash scripts/05_process_mapped_reads.sh -d <sam_directory> -t <threads> -m <PE|SE|BOTH> [options]
 #
 # Examples:
-#   bash scripts/06_process_sam_bam.sh -d results/mapping/sam -t 8 -m BOTH
-#   bash scripts/06_process_sam_bam.sh -d results/mapping/sam -t 8 -m PE
-#   bash scripts/06_process_sam_bam.sh -d results/mapping/sam -t 8 -m BOTH --delete-sam
+#   bash scripts/05_process_mapped_reads.sh -d results/mapping/sam -t 8 -m BOTH
+#   bash scripts/05_process_mapped_reads.sh -d results/mapping/sam -t 8 -m PE
+#   bash scripts/05_process_mapped_reads.sh -d results/mapping/sam -t 8 -m BOTH --delete-sam
 #
 # Requirements:
 #   - Docker
@@ -54,7 +54,7 @@ set -euo pipefail
 show_help() {
     cat << EOF
 Usage:
-  bash scripts/06_process_sam_bam.sh -d <directory> -t <threads> -m <PE|SE|BOTH> [options]
+  bash scripts/05_process_mapped_reads.sh -d <directory> -t <threads> -m <PE|SE|BOTH> [options]
 
 Required arguments:
   -d <directory>       Directory containing input .sam files
@@ -81,9 +81,9 @@ Behavior:
   - samtools markdup runs with a Docker memory limit equal to 80% of host RAM.
 
 Examples:
-  bash scripts/06_process_sam_bam.sh -d results/mapping/sam -t 8 -m BOTH
-  bash scripts/06_process_sam_bam.sh -d results/mapping/sam -t 8 -m PE -i staphb/samtools
-  bash scripts/06_process_sam_bam.sh -d results/mapping/sam -t 8 -m BOTH --delete-sam
+  bash scripts/05_process_mapped_reads.sh -d results/mapping/sam -t 8 -m BOTH
+  bash scripts/05_process_mapped_reads.sh -d results/mapping/sam -t 8 -m PE -i staphb/samtools
+  bash scripts/05_process_mapped_reads.sh -d results/mapping/sam -t 8 -m BOTH --delete-sam
 EOF
 }
 
