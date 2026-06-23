@@ -27,17 +27,17 @@ set -euo pipefail
 #   - Input VCF files
 #
 # Usage:
-#   bash scripts/09_prepare_vcfs.sh rename -m mapping.tsv [-o output_dir] [-t threads] file1.vcf [file2.vcf ...]
-#   bash scripts/09_prepare_vcfs.sh set-ids -i input.vcf.gz -o output.vcf.gz
+#   bash scripts/08_prepare_vcfs.sh rename -m mapping.tsv [-o output_dir] [-t threads] file1.vcf [file2.vcf ...]
+#   bash scripts/08_prepare_vcfs.sh set-ids -i input.vcf.gz -o output.vcf.gz
 #
 # Examples:
-#   bash scripts/09_prepare_vcfs.sh rename \
+#   bash scripts/08_prepare_vcfs.sh rename \
 #     -m data/metadata/rename_map.tsv \
 #     -o results/variants/renamed_vcfs \
 #     -t 8 \
 #     results/variants/*.vcf
 #
-#   bash scripts/09_prepare_vcfs.sh set-ids \
+#   bash scripts/08_prepare_vcfs.sh set-ids \
 #     -i results/filtered_vcf/Sace_filtered_snvs.vcf.gz \
 #     -o results/filtered_vcf/Sace_pos_id.vcf.gz
 ###############################################################################
@@ -53,22 +53,22 @@ UID_GID="$(id -u):$(id -g)"
 main_usage() {
     cat << EOF
 Usage:
-  bash scripts/09_prepare_vcfs.sh <mode> [options]
+  bash scripts/08_prepare_vcfs.sh <mode> [options]
 
 Modes:
   rename    Rename single-sample VCF files using a mapping table
   set-ids   Set variant IDs using CHROM, POS, REF, and ALT
 
 Run one of the following for mode-specific help:
-  bash scripts/09_prepare_vcfs.sh rename --help
-  bash scripts/09_prepare_vcfs.sh set-ids --help
+  bash scripts/08_prepare_vcfs.sh rename --help
+  bash scripts/08_prepare_vcfs.sh set-ids --help
 EOF
 }
 
 rename_usage() {
     cat << EOF
 Usage:
-  bash scripts/09_prepare_vcfs.sh rename -m mapping.tsv [-o output_dir] [-t threads] file1.vcf [file2.vcf file3.vcf.gz ...]
+  bash scripts/08_prepare_vcfs.sh rename -m mapping.tsv [-o output_dir] [-t threads] file1.vcf [file2.vcf file3.vcf.gz ...]
 
 Description:
   - Renames each VCF file based on a mapping table
@@ -87,15 +87,15 @@ Optional:
        Default: 4
 
 Examples:
-  bash scripts/09_prepare_vcfs.sh rename -m rename_map.tsv ERR1308862.vcf ERR1352845.vcf
-  bash scripts/09_prepare_vcfs.sh rename -m rename_map.tsv -o final_vcfs -t 8 *.vcf
+  bash scripts/08_prepare_vcfs.sh rename -m rename_map.tsv ERR1308862.vcf ERR1352845.vcf
+  bash scripts/08_prepare_vcfs.sh rename -m rename_map.tsv -o final_vcfs -t 8 *.vcf
 EOF
 }
 
 set_ids_usage() {
     cat << EOF
 Usage:
-  bash scripts/09_prepare_vcfs.sh set-ids -i input.vcf.gz -o output.vcf.gz
+  bash scripts/08_prepare_vcfs.sh set-ids -i input.vcf.gz -o output.vcf.gz
 
 Description:
   - Creates variant IDs based on CHROM, POS, REF, and ALT
@@ -109,7 +109,7 @@ Required:
   -o   Output VCF.GZ file
 
 Example:
-  bash scripts/09_prepare_vcfs.sh set-ids \\
+  bash scripts/08_prepare_vcfs.sh set-ids \\
     -i results/filtered_vcf/Sace_filtered_snvs.vcf.gz \\
     -o results/filtered_vcf/Sace_pos_id.vcf.gz
 EOF
