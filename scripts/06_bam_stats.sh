@@ -24,11 +24,11 @@ shopt -s nullglob
 #   <outdir>/summary/
 #
 # Usage:
-#   bash scripts/07_bam_stats.sh <bam_dir> <output_dir> [threads]
+#   bash scripts/06_bam_stats.sh <bam_dir> <output_dir> [threads]
 #
 # Examples:
-#   bash scripts/07_bam_stats.sh results/mapping/sam/06_q20_bam results/bam_stats 8
-#   bash scripts/07_bam_stats.sh results/mapping/sam/04_dedup_bam results/bam_stats_dedup 8
+#   bash scripts/06_bam_stats.sh results/mapping/sam/06_q20_bam results/bam_stats 8
+#   bash scripts/06_bam_stats.sh results/mapping/sam/04_dedup_bam results/bam_stats_dedup 8
 #
 # Default:
 #   threads = 8
@@ -45,7 +45,7 @@ THREADS="${3:-8}"
 show_help() {
     cat << EOF
 Usage:
-  bash scripts/07_bam_stats.sh <bam_dir> <output_dir> [threads]
+  bash scripts/06_bam_stats.sh <bam_dir> <output_dir> [threads]
 
 Arguments:
   <bam_dir>      Directory containing BAM files
@@ -53,8 +53,8 @@ Arguments:
   [threads]      Number of threads for samtools index/flagstat
 
 Examples:
-  bash scripts/07_bam_stats.sh results/mapping/sam/06_q20_bam results/bam_stats 8
-  bash scripts/07_bam_stats.sh results/mapping/sam/04_dedup_bam results/bam_stats_dedup 8
+  bash scripts/06_bam_stats.sh results/mapping/sam/06_q20_bam results/bam_stats 8
+  bash scripts/06_bam_stats.sh results/mapping/sam/04_dedup_bam results/bam_stats_dedup 8
 EOF
 }
 
