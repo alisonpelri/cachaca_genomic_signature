@@ -19,10 +19,10 @@ shopt -s nullglob
 #   <output_dir>/SAMPLE.vcf
 #
 # Usage:
-#   bash scripts/08_call_variants.sh <reference_fasta> <bam_dir> <output_dir> [threads]
+#   bash scripts/07_variant_calling.sh <reference_fasta> <bam_dir> <output_dir> [threads]
 #
 # Example:
-#   bash scripts/08_call_variants.sh \
+#   bash scripts/07_variant_calling.sh \
 #     data/reference/GCF_000146045.2_R64_genomic.fna \
 #     results/mapping/sam/06_q20_bam \
 #     results/variants \
@@ -49,7 +49,7 @@ BCFTOOLS_IMAGE="staphb/bcftools"
 show_help() {
     cat << EOF
 Usage:
-  bash scripts/08_call_variants.sh <reference_fasta> <bam_dir> <output_dir> [threads]
+  bash scripts/07_variant_calling.sh <reference_fasta> <bam_dir> <output_dir> [threads]
 
 Arguments:
   <reference_fasta>   Reference genome in FASTA format
@@ -61,7 +61,7 @@ Expected BAM filename pattern:
   SAMPLE_PE_mapped_sorted_dedup_q20_bt.bam
 
 Example:
-  bash scripts/08_call_variants.sh \\
+  bash scripts/07_variant_calling.sh \\
     data/reference/GCF_000146045.2_R64_genomic.fna \\
     results/mapping/sam/06_q20_bam \\
     results/variants \\
