@@ -1,4 +1,3 @@
-```bash id="uucj63"
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -466,4 +465,3 @@ case "$MODE" in
         exit 1
         ;;
 esac
-```
