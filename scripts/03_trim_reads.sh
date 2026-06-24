@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -142,5 +141,3 @@ done
 echo
 echo "Read trimming completed."
 echo "Trimmed reads saved in: $OUTDIR"
-```
-
