@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 set -euo pipefail
 shopt -s nullglob
@@ -199,4 +198,3 @@ done
 
 echo "Variant calling completed."
 echo "VCF files saved in: $OUTDIR_ABS"
-```
