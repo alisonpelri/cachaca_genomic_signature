@@ -1,0 +1,480 @@
+```r id="8ck9x3"
+#!/usr/bin/env Rscript
+
+###############################################################################
+# 02_summarize_splsda_results.R
+#
+# Summarize and rank multiple sPLS-DA result directories.
+#
+# This script scans a root directory containing multiple sPLS-DA result folders,
+# extracts the main performance metrics from each run, and builds comparison
+# tables.
+#
+# Expected input structure:
+#
+#   <results_root>/
+#   ├── dataset_1/
+#   │   └── tables/
+#   │       ├── performance_by_component.tsv
+#   │       ├── best_model_choices.tsv
+#   │       ├── selected_snps_unique.tsv
+#   │       └── run_summary.tsv
+#   ├── dataset_2/
+#   │   └── tables/
+#   │       ├── performance_by_component.tsv
+#   │       ├── best_model_choices.tsv
+#   │       ├── selected_snps_unique.tsv
+#   │       └── run_summary.tsv
+#   └── ...
+#
+# Output files:
+#
+#   <outdir>/
+#   ├── splsda_comparison_summary.tsv
+#   ├── splsda_comparison_summary_ranked.tsv
+#   └── splsda_comparison_issues.tsv
+#
+# Main statistics extracted:
+#   - best BER
+#   - overall error at best BER
+#   - best component
+#   - best number of components
+#   - total number of selected variables
+#   - keepX values by component
+#   - number of unique selected SNPs
+#   - number of samples
+#   - number of SNPs after QC
+#   - number of groups
+#   - group labels
+#
+# Usage:
+#   Rscript scripts/02_summarize_splsda_results.R <results_root> <outdir>
+#
+# Example:
+#   Rscript scripts/02_summarize_splsda_results.R \
+#     results/splsda_results \
+#     results/splsda_results_summary
+#
+# Required R package:
+#   - data.table
+###############################################################################
+
+###############################################################################
+# Check and load required packages
+###############################################################################
+
+required_packages <- c("data.table")
+
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+
+if (length(missing_packages) > 0) {
+  cat(
+    "ERROR: The following R packages are required but not installed:\n  ",
+    paste(missing_packages, collapse = ", "),
+    "\n\nInstall them with:\n",
+    "  install.packages(c(\"data.table\"))\n",
+    file = stderr()
+  )
+  quit(status = 1)
+}
+
+suppressPackageStartupMessages({
+  library(data.table)
+})
+
+###############################################################################
+# Helper functions
+###############################################################################
+
+stop_msg <- function(...) {
+  cat(..., "\n", file = stderr())
+  quit(status = 1)
+}
+
+make_dir <- function(path) {
+  if (!dir.exists(path)) {
+    dir.create(path, recursive = TRUE, showWarnings = FALSE)
+  }
+}
+
+write_tsv <- function(x, file) {
+  data.table::fwrite(x, file = file, sep = "\t", quote = FALSE, na = "NA")
+}
+
+safe_read_tsv <- function(file) {
+  if (!file.exists(file)) {
+    return(NULL)
+  }
+  
+  tryCatch(
+    data.table::fread(file),
+    error = function(e) NULL
+  )
+}
+
+clean_component_number <- function(x) {
+  as.integer(gsub("[^0-9]", "", as.character(x)))
+}
+
+safe_first <- function(x, default = NA) {
+  if (length(x) == 0) {
+    return(default)
+  }
+  
+  x[1]
+}
+
+safe_numeric <- function(x) {
+  suppressWarnings(as.numeric(as.character(x)))
+}
+
+safe_integer <- function(x) {
+  suppressWarnings(as.integer(as.character(x)))
+}
+
+parse_keepx_total <- function(x) {
+  if (length(x) == 0 || is.na(x[1]) || x[1] == "") {
+    return(NA_real_)
+  }
+  
+  values <- unlist(strsplit(as.character(x[1]), ","))
+  values <- safe_numeric(trimws(values))
+  sum(values, na.rm = TRUE)
+}
+
+###############################################################################
+# Parse command-line arguments
+###############################################################################
+
+args <- commandArgs(trailingOnly = TRUE)
+
+if (length(args) != 2) {
+  stop_msg(
+    "Usage:\n",
+    "  Rscript scripts/02_summarize_splsda_results.R <results_root> <outdir>\n\n",
+    "Example:\n",
+    "  Rscript scripts/02_summarize_splsda_results.R ",
+    "results/splsda_results results/splsda_results_summary"
+  )
+}
+
+results_root <- args[1]
+outdir <- args[2]
+
+if (!dir.exists(results_root)) {
+  stop_msg("ERROR: results directory not found: ", results_root)
+}
+
+make_dir(outdir)
+
+results_root_abs <- normalizePath(results_root, mustWork = TRUE)
+outdir_abs <- normalizePath(outdir, mustWork = TRUE)
+
+###############################################################################
+# Find result subdirectories
+###############################################################################
+
+result_dirs <- list.dirs(results_root_abs, recursive = FALSE, full.names = TRUE)
+
+if (length(result_dirs) == 0) {
+  stop_msg("ERROR: no result subdirectories found in: ", results_root_abs)
+}
+
+cat("Result folders found:\n")
+cat(paste(" -", basename(result_dirs)), sep = "\n")
+cat("\n")
+
+###############################################################################
+# Extract metrics from each result folder
+###############################################################################
+
+summary_list <- list()
+issues_list <- list()
+
+for (dir_i in result_dirs) {
+  
+  dataset_name <- basename(dir_i)
+  tables_dir <- file.path(dir_i, "tables")
+  
+  perf_file <- file.path(tables_dir, "performance_by_component.tsv")
+  choice_file <- file.path(tables_dir, "best_model_choices.tsv")
+  snps_file <- file.path(tables_dir, "selected_snps_unique.tsv")
+  runsum_file <- file.path(tables_dir, "run_summary.tsv")
+  
+  perf_dt <- safe_read_tsv(perf_file)
+  choice_dt <- safe_read_tsv(choice_file)
+  snps_dt <- safe_read_tsv(snps_file)
+  run_dt <- safe_read_tsv(runsum_file)
+  
+  ###########################################################################
+  # Track missing or unreadable files
+  ###########################################################################
+  
+  missing_files <- character()
+  
+  if (is.null(perf_dt)) {
+    missing_files <- c(missing_files, "performance_by_component.tsv")
+  }
+  
+  if (is.null(choice_dt)) {
+    missing_files <- c(missing_files, "best_model_choices.tsv")
+  }
+  
+  if (is.null(snps_dt)) {
+    missing_files <- c(missing_files, "selected_snps_unique.tsv")
+  }
+  
+  if (is.null(run_dt)) {
+    missing_files <- c(missing_files, "run_summary.tsv")
+  }
+  
+  if (length(missing_files) > 0) {
+    issues_list[[dataset_name]] <- data.table(
+      dataset = dataset_name,
+      issue = paste(
+        "Missing or unreadable files:",
+        paste(missing_files, collapse = ", ")
+      )
+    )
+  }
+  
+  ###########################################################################
+  # performance_by_component.tsv
+  ###########################################################################
+  
+  best_component <- NA_integer_
+  best_BER <- NA_real_
+  overall_error_at_best_BER <- NA_real_
+  
+  if (!is.null(perf_dt) && all(c("component", "BER") %in% names(perf_dt))) {
+    
+    perf_dt[, component_num := clean_component_number(component)]
+    perf_dt[, BER := safe_numeric(BER)]
+    
+    if ("overall_error" %in% names(perf_dt)) {
+      perf_dt[, overall_error := safe_numeric(overall_error)]
+    } else {
+      perf_dt[, overall_error := NA_real_]
+    }
+    
+    valid_perf_dt <- perf_dt[!is.na(BER)]
+    
+    if (nrow(valid_perf_dt) > 0) {
+      # Rank by increasing BER; in case of ties, prefer fewer components.
+      valid_perf_dt <- valid_perf_dt[order(BER, component_num)]
+      
+      best_row <- valid_perf_dt[1]
+      best_component <- best_row$component_num
+      best_BER <- best_row$BER
+      overall_error_at_best_BER <- best_row$overall_error
+    }
+  }
+  
+  ###########################################################################
+  # best_model_choices.tsv
+  ###########################################################################
+  
+  best_ncomp <- NA_integer_
+  keepX_total <- NA_real_
+  keepX_by_component <- NA_character_
+  
+  if (
+    !is.null(choice_dt) &&
+    all(c("best_ncomp", "component", "best_keepX") %in% names(choice_dt))
+  ) {
+    choice_dt[, best_ncomp := safe_integer(best_ncomp)]
+    choice_dt[, best_keepX := safe_numeric(best_keepX)]
+    
+    best_ncomp <- safe_first(na.omit(choice_dt$best_ncomp), NA_integer_)
+    keepX_total <- sum(choice_dt$best_keepX, na.rm = TRUE)
+    keepX_by_component <- paste(choice_dt$best_keepX, collapse = ",")
+  }
+  
+  ###########################################################################
+  # selected_snps_unique.tsv
+  ###########################################################################
+  
+  n_snps_unique <- NA_integer_
+  
+  if (!is.null(snps_dt)) {
+    if ("SNP" %in% names(snps_dt)) {
+      n_snps_unique <- uniqueN(snps_dt$SNP)
+    } else {
+      n_snps_unique <- nrow(snps_dt)
+    }
+  }
+  
+  ###########################################################################
+  # run_summary.tsv
+  ###########################################################################
+  
+  n_samples <- NA_integer_
+  n_snps_before_qc <- NA_integer_
+  n_snps_after_qc <- NA_integer_
+  n_groups <- NA_integer_
+  group_levels <- NA_character_
+  folds <- NA_integer_
+  nrepeat <- NA_integer_
+  distance <- NA_character_
+  max_ncomp_tested <- NA_integer_
+  
+  if (!is.null(run_dt)) {
+    
+    if ("n_samples" %in% names(run_dt)) {
+      n_samples <- safe_integer(run_dt$n_samples[1])
+    }
+    
+    if ("n_snps_before_qc" %in% names(run_dt)) {
+      n_snps_before_qc <- safe_integer(run_dt$n_snps_before_qc[1])
+    }
+    
+    if ("n_snps_after_qc" %in% names(run_dt)) {
+      n_snps_after_qc <- safe_integer(run_dt$n_snps_after_qc[1])
+    }
+    
+    if ("n_groups" %in% names(run_dt)) {
+      n_groups <- safe_integer(run_dt$n_groups[1])
+    }
+    
+    if ("group_levels" %in% names(run_dt)) {
+      group_levels <- as.character(run_dt$group_levels[1])
+    }
+    
+    if ("folds" %in% names(run_dt)) {
+      folds <- safe_integer(run_dt$folds[1])
+    }
+    
+    if ("nrepeat" %in% names(run_dt)) {
+      nrepeat <- safe_integer(run_dt$nrepeat[1])
+    }
+    
+    if ("distance" %in% names(run_dt)) {
+      distance <- as.character(run_dt$distance[1])
+    }
+    
+    if ("max_ncomp_tested" %in% names(run_dt)) {
+      max_ncomp_tested <- safe_integer(run_dt$max_ncomp_tested[1])
+    }
+    
+    # Fallbacks in case best_model_choices.tsv is missing.
+    if (is.na(best_ncomp) && "best_ncomp" %in% names(run_dt)) {
+      best_ncomp <- safe_integer(run_dt$best_ncomp[1])
+    }
+    
+    if (is.na(keepX_by_component) && "best_keepX" %in% names(run_dt)) {
+      keepX_by_component <- as.character(run_dt$best_keepX[1])
+      keepX_total <- parse_keepx_total(keepX_by_component)
+    }
+  }
+  
+  ###########################################################################
+  # Final summary row for this dataset
+  ###########################################################################
+  
+  summary_list[[dataset_name]] <- data.table(
+    dataset = dataset_name,
+    best_component = best_component,
+    best_BER = best_BER,
+    overall_error_at_best_BER = overall_error_at_best_BER,
+    best_ncomp = best_ncomp,
+    max_ncomp_tested = max_ncomp_tested,
+    keepX_total = keepX_total,
+    keepX_by_component = keepX_by_component,
+    n_snps_unique = n_snps_unique,
+    n_samples = n_samples,
+    n_snps_before_qc = n_snps_before_qc,
+    n_snps_after_qc = n_snps_after_qc,
+    n_groups = n_groups,
+    group_levels = group_levels,
+    folds = folds,
+    nrepeat = nrepeat,
+    distance = distance
+  )
+}
+
+###############################################################################
+# Combine and rank summaries
+###############################################################################
+
+summary_dt <- rbindlist(summary_list, fill = TRUE)
+
+issues_dt <- if (length(issues_list) > 0) {
+  rbindlist(issues_list, fill = TRUE)
+} else {
+  data.table(
+    dataset = character(),
+    issue = character()
+  )
+}
+
+# Rank by:
+#   1) lower BER
+#   2) lower keepX_total
+#   3) lower best_ncomp
+#
+# Missing values are ranked last.
+summary_ranked_dt <- copy(summary_dt)
+
+summary_ranked_dt[, rank_BER_key := fifelse(is.na(best_BER), Inf, best_BER)]
+summary_ranked_dt[, rank_keepX_key := fifelse(is.na(keepX_total), Inf, keepX_total)]
+summary_ranked_dt[, rank_ncomp_key := fifelse(is.na(best_ncomp), Inf, as.numeric(best_ncomp))]
+
+summary_ranked_dt <- summary_ranked_dt[
+  order(rank_BER_key, rank_keepX_key, rank_ncomp_key, dataset)
+]
+
+summary_ranked_dt[, rank_by_BER := seq_len(.N)]
+
+summary_ranked_dt[, c("rank_BER_key", "rank_keepX_key", "rank_ncomp_key") := NULL]
+
+# Move rank_by_BER to the first column.
+setcolorder(
+  summary_ranked_dt,
+  c("rank_by_BER", setdiff(names(summary_ranked_dt), "rank_by_BER"))
+)
+
+###############################################################################
+# Save output tables
+###############################################################################
+
+summary_file <- file.path(outdir_abs, "splsda_comparison_summary.tsv")
+ranked_file <- file.path(outdir_abs, "splsda_comparison_summary_ranked.tsv")
+issues_file <- file.path(outdir_abs, "splsda_comparison_issues.tsv")
+
+write_tsv(summary_dt, summary_file)
+write_tsv(summary_ranked_dt, ranked_file)
+
+if (nrow(issues_dt) > 0) {
+  write_tsv(issues_dt, issues_file)
+}
+
+###############################################################################
+# Print compact summary to console
+###############################################################################
+
+cat("\nComparative summary ranked by BER:\n\n")
+
+compact_cols <- c(
+  "rank_by_BER",
+  "dataset",
+  "best_BER",
+  "overall_error_at_best_BER",
+  "best_ncomp",
+  "keepX_total",
+  "n_snps_unique"
+)
+
+print(summary_ranked_dt[, ..compact_cols])
+
+cat("\nFiles saved:\n")
+cat(" -", summary_file, "\n")
+cat(" -", ranked_file, "\n")
+
+if (nrow(issues_dt) > 0) {
+  cat(" -", issues_file, "\n")
+}
+
+cat("\nDone.\n")
+```
