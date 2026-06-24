@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -326,4 +325,3 @@ echo "Merged VCF statistics completed."
 echo "Summary table: $SUMMARY_FILE"
 echo "Site-level table: $SITE_STATS_HOST"
 echo "Tagged VCF: ${OUTDIR_ABS}/merged.with_tags.vcf.gz"
-```
