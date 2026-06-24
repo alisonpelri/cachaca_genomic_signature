@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -204,5 +203,3 @@ echo
 echo "Pipeline finished."
 echo "FASTQ directory: $OUTDIR"
 echo "Log directory:   $LOGDIR"
-```
-
