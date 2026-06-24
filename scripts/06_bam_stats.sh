@@ -1,4 +1,3 @@
-```bash id="qsaqa4"
 #!/usr/bin/env bash
 set -euo pipefail
 shopt -s nullglob
@@ -268,4 +267,3 @@ done
 
 echo "BAM statistics completed."
 echo "Summary table: $SUMMARY_FILE"
-```
