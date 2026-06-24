@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -145,5 +144,3 @@ docker run --rm \
 echo
 echo "FastQC/MultiQC analysis completed."
 echo "Reports saved in: $OUTDIR"
-```
-
