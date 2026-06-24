@@ -1,6 +1,6 @@
 # Genetic Structure Analysis Workflow
 
-This document organizes the commands used to perform genetic structure analyses from a filtered multi-sample VCF file.
+This document organizes the genetic structure analyses from a filtered multi-sample VCF file.
 
 The workflow includes:
 
@@ -15,7 +15,7 @@ The workflow includes:
 9. Combined Fst/delta ranking
 10. ADMIXTURE analysis
 
-> **Note:** This markdown file is intended as a documented workflow. For full automation, these commands can later be split into bash/R scripts, a `Makefile`, or a Snakemake/Nextflow workflow.
+> **Note:** This markdown file is intended to document a workflow. For full automation, these commands can later be split into bash/R scripts.
 
 ---
 
