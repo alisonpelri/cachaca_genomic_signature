@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 set -euo pipefail
 shopt -s nullglob
@@ -360,4 +359,3 @@ done
 
 echo "Individual VCF statistics completed."
 echo "Summary table: $SUMMARY_FILE"
-```
