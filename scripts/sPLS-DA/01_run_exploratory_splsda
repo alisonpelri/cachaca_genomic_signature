@@ -1,0 +1,744 @@
+```r id="92rpjl"
+#!/usr/bin/env Rscript
+
+###############################################################################
+# 01_run_exploratory_splsda.R
+#
+# Run sparse Partial Least Squares Discriminant Analysis (sPLS-DA) using
+# genotype matrices and sample group labels.
+#
+# This script:
+#   1) Reads an X matrix with samples as rows and SNPs/features as columns
+#   2) Reads a Y table with sample-to-group assignments
+#   3) Aligns samples between X and Y
+#   4) Applies minimal QC to the X matrix
+#   5) Tunes the sPLS-DA model using cross-validation
+#   6) Fits the final sPLS-DA model
+#   7) Exports performance tables, selected SNPs, sample scores, plots, and RDS objects
+#
+# Input files:
+#   X.tsv
+#     Required columns:
+#       sample
+#       SNP_1
+#       SNP_2
+#       ...
+#
+#   Y.tsv
+#     Required columns:
+#       sample
+#       group
+#
+# Usage:
+#   Rscript scripts/01_run_exploratory_splsda.R <X.tsv> <Y.tsv> <outdir> [max_ncomp]
+#
+# Example:
+#   Rscript scripts/01_run_exploratory_splsda.R \
+#     results/splsda_inputs/combined_top10_X.tsv \
+#     results/splsda_inputs/combined_top10_Y.tsv \
+#     results/splsda_results/combined_top10 \
+#     3
+#
+# Output structure:
+#   <outdir>/
+#   ├── tables/
+#   │   ├── input_summary.tsv
+#   │   ├── class_counts.tsv
+#   │   ├── best_model_choices.tsv
+#   │   ├── performance_by_component.tsv
+#   │   ├── selected_snps_by_component.tsv
+#   │   ├── selected_snps_unique.tsv
+#   │   ├── sample_scores.tsv
+#   │   └── run_summary.tsv
+#   ├── plots/
+#   │   ├── ber_by_component.png
+#   │   ├── scores_comp1_vs_comp2.png
+#   │   ├── scores_comp1_vs_comp3.png
+#   │   └── top_loadings_by_component.png
+#   └── r_objects/
+#       ├── tune_splsda.rds
+#       ├── final_splsda_model.rds
+#       └── perf_splsda.rds
+#
+# Required R packages:
+#   - data.table
+#   - mixOmics
+#   - ggplot2
+###############################################################################
+
+###############################################################################
+# Helper functions
+###############################################################################
+
+stop_msg <- function(...) {
+  cat(..., "\n", file = stderr())
+  quit(status = 1)
+}
+
+make_dir <- function(path) {
+  if (!dir.exists(path)) {
+    dir.create(path, recursive = TRUE, showWarnings = FALSE)
+  }
+}
+
+write_tsv <- function(x, file) {
+  data.table::fwrite(x, file = file, sep = "\t", quote = FALSE, na = "NA")
+}
+
+sanitize_names <- function(x) {
+  x <- gsub("\r", "", x)
+  x <- trimws(x)
+  x
+}
+
+safe_factor <- function(x) {
+  factor(trimws(as.character(x)))
+}
+
+check_required_packages <- function(packages) {
+  missing_packages <- packages[!vapply(packages, requireNamespace, logical(1), quietly = TRUE)]
+  
+  if (length(missing_packages) > 0) {
+    stop_msg(
+      "ERROR: The following R packages are required but not installed:\n  ",
+      paste(missing_packages, collapse = ", "),
+      "\n\nInstall CRAN packages with:\n",
+      "  install.packages(c(\"data.table\", \"ggplot2\"))\n\n",
+      "Install mixOmics from Bioconductor with:\n",
+      "  install.packages(\"BiocManager\")\n",
+      "  BiocManager::install(\"mixOmics\")"
+    )
+  }
+}
+
+extract_error_table <- function(perf_res, dist_method) {
+  overall_mat <- perf_res$error.rate$overall
+  ber_mat <- perf_res$error.rate$BER
+  
+  if (is.null(overall_mat) || is.null(ber_mat)) {
+    stop_msg("ERROR: Could not extract error rates from mixOmics::perf() output.")
+  }
+  
+  overall_dt <- data.table::as.data.table(overall_mat, keep.rownames = "component")
+  ber_dt <- data.table::as.data.table(ber_mat, keep.rownames = "component")
+  
+  if (!(dist_method %in% names(overall_dt))) {
+    dist_candidates <- setdiff(names(overall_dt), "component")
+    if (length(dist_candidates) == 0) {
+      stop_msg("ERROR: No distance method column found in overall error table.")
+    }
+    dist_method_overall <- dist_candidates[1]
+  } else {
+    dist_method_overall <- dist_method
+  }
+  
+  if (!(dist_method %in% names(ber_dt))) {
+    dist_candidates <- setdiff(names(ber_dt), "component")
+    if (length(dist_candidates) == 0) {
+      stop_msg("ERROR: No distance method column found in BER table.")
+    }
+    dist_method_ber <- dist_candidates[1]
+  } else {
+    dist_method_ber <- dist_method
+  }
+  
+  overall_dt <- overall_dt[, .(
+    component,
+    overall_error = get(dist_method_overall)
+  )]
+  
+  ber_dt <- ber_dt[, .(
+    component,
+    BER = get(dist_method_ber)
+  )]
+  
+  merge(overall_dt, ber_dt, by = "component", all = TRUE)
+}
+
+###############################################################################
+# Check packages and load libraries
+###############################################################################
+
+required_packages <- c("data.table", "mixOmics", "ggplot2")
+check_required_packages(required_packages)
+
+suppressPackageStartupMessages({
+  library(data.table)
+  library(mixOmics)
+  library(ggplot2)
+})
+
+###############################################################################
+# Parse command-line arguments
+###############################################################################
+
+args <- commandArgs(trailingOnly = TRUE)
+
+if (length(args) < 3 || length(args) > 4) {
+  stop_msg(
+    "Usage:\n",
+    "  Rscript scripts/01_run_exploratory_splsda.R <X.tsv> <Y.tsv> <outdir> [max_ncomp]\n\n",
+    "Example:\n",
+    "  Rscript scripts/01_run_exploratory_splsda.R ",
+    "results/splsda_inputs/combined_top10_X.tsv ",
+    "results/splsda_inputs/combined_top10_Y.tsv ",
+    "results/splsda_results/combined_top10 3"
+  )
+}
+
+x_file <- args[1]
+y_file <- args[2]
+outdir <- args[3]
+
+max_ncomp_user <- NA_integer_
+
+if (length(args) == 4) {
+  max_ncomp_user <- suppressWarnings(as.integer(args[4]))
+  
+  if (is.na(max_ncomp_user) || max_ncomp_user < 1) {
+    stop_msg("ERROR: [max_ncomp] must be a positive integer.")
+  }
+}
+
+if (!file.exists(x_file)) {
+  stop_msg("ERROR: X file not found: ", x_file)
+}
+
+if (!file.exists(y_file)) {
+  stop_msg("ERROR: Y file not found: ", y_file)
+}
+
+make_dir(outdir)
+make_dir(file.path(outdir, "tables"))
+make_dir(file.path(outdir, "plots"))
+make_dir(file.path(outdir, "r_objects"))
+
+###############################################################################
+# User-adjustable analysis parameters
+###############################################################################
+
+set.seed(42)
+
+dist_method <- "max.dist"
+folds_max <- 5
+nrepeat <- 10
+
+###############################################################################
+# 1. Read input files
+###############################################################################
+
+cat("Reading input files...\n")
+
+X_dt <- fread(x_file)
+Y_dt <- fread(y_file)
+
+names(X_dt) <- sanitize_names(names(X_dt))
+names(Y_dt) <- sanitize_names(names(Y_dt))
+
+if (!("sample" %in% names(X_dt))) {
+  stop_msg("ERROR: X.tsv must contain a column named 'sample'.")
+}
+
+if (!all(c("sample", "group") %in% names(Y_dt))) {
+  stop_msg("ERROR: Y.tsv must contain columns named 'sample' and 'group'.")
+}
+
+X_dt[, sample := sanitize_names(sample)]
+Y_dt[, sample := sanitize_names(sample)]
+Y_dt[, group := sanitize_names(group)]
+
+if (anyDuplicated(X_dt$sample)) {
+  duplicated_samples <- unique(X_dt$sample[duplicated(X_dt$sample)])
+  stop_msg(
+    "ERROR: duplicated sample IDs found in X.tsv: ",
+    paste(duplicated_samples, collapse = ", ")
+  )
+}
+
+if (anyDuplicated(Y_dt$sample)) {
+  duplicated_samples <- unique(Y_dt$sample[duplicated(Y_dt$sample)])
+  stop_msg(
+    "ERROR: duplicated sample IDs found in Y.tsv: ",
+    paste(duplicated_samples, collapse = ", ")
+  )
+}
+
+###############################################################################
+# 2. Align samples between X and Y
+###############################################################################
+
+cat("Aligning samples between X and Y...\n")
+
+common_samples <- intersect(X_dt$sample, Y_dt$sample)
+
+if (length(common_samples) == 0) {
+  stop_msg("ERROR: no common samples found between X.tsv and Y.tsv.")
+}
+
+n_x_before <- nrow(X_dt)
+n_y_before <- nrow(Y_dt)
+
+X_dt <- X_dt[sample %in% common_samples]
+Y_dt <- Y_dt[sample %in% common_samples]
+
+# Keep the same order as X.
+Y_dt <- Y_dt[match(X_dt$sample, sample)]
+
+if (!all(X_dt$sample == Y_dt$sample)) {
+  stop_msg("ERROR: sample alignment between X and Y failed.")
+}
+
+input_summary <- data.table(
+  x_file = x_file,
+  y_file = y_file,
+  n_samples_x = n_x_before,
+  n_samples_y = n_y_before,
+  n_common_samples = length(common_samples),
+  n_samples_removed_from_x = n_x_before - length(common_samples),
+  n_samples_removed_from_y = n_y_before - length(common_samples)
+)
+
+write_tsv(input_summary, file.path(outdir, "tables", "input_summary.tsv"))
+
+###############################################################################
+# 3. Prepare X matrix and Y vector
+###############################################################################
+
+cat("Preparing X matrix and Y vector...\n")
+
+sample_ids <- X_dt$sample
+group_vec <- safe_factor(Y_dt$group)
+
+class_counts <- data.table(
+  group = names(table(group_vec)),
+  n = as.integer(table(group_vec))
+)
+
+write_tsv(class_counts, file.path(outdir, "tables", "class_counts.tsv"))
+
+if (nlevels(group_vec) < 2) {
+  stop_msg("ERROR: at least two groups are required for sPLS-DA.")
+}
+
+# Remove sample column from X.
+X_only <- copy(X_dt)[, !"sample"]
+
+# Convert to numeric matrix.
+X_mat <- as.matrix(X_only)
+storage.mode(X_mat) <- "numeric"
+rownames(X_mat) <- sample_ids
+
+###############################################################################
+# 4. Minimal QC for sPLS-DA
+###############################################################################
+# This QC step:
+#   - removes columns that are entirely NA
+#   - imputes remaining NA values using column medians
+#   - removes columns with zero variance
+#
+# mixOmics may tolerate missing data in some contexts, but cleaning the matrix
+# here avoids surprises during tuning and performance estimation.
+
+cat("Applying QC to X matrix...\n")
+
+n_snps_before_qc <- ncol(X_mat)
+
+# Remove columns that are entirely NA.
+all_na_cols <- colSums(!is.na(X_mat)) == 0
+
+if (any(all_na_cols)) {
+  cat("Removing", sum(all_na_cols), "columns that are entirely NA.\n")
+  X_mat <- X_mat[, !all_na_cols, drop = FALSE]
+}
+
+# Impute remaining NA values using the column median.
+na_count_before <- sum(is.na(X_mat))
+
+if (na_count_before > 0) {
+  cat("Imputing", na_count_before, "missing values using column medians.\n")
+  
+  for (j in seq_len(ncol(X_mat))) {
+    miss <- is.na(X_mat[, j])
+    
+    if (any(miss)) {
+      med <- median(X_mat[, j], na.rm = TRUE)
+      
+      if (is.na(med)) {
+        med <- 0
+      }
+      
+      X_mat[miss, j] <- med
+    }
+  }
+}
+
+# Remove columns with zero variance.
+vars <- apply(X_mat, 2, var)
+zero_var_cols <- is.na(vars) | vars == 0
+
+if (any(zero_var_cols)) {
+  cat("Removing", sum(zero_var_cols), "columns with zero variance.\n")
+  X_mat <- X_mat[, !zero_var_cols, drop = FALSE]
+}
+
+if (ncol(X_mat) < 2) {
+  stop_msg("ERROR: X matrix has fewer than 2 variables after QC.")
+}
+
+n_snps_after_qc <- ncol(X_mat)
+
+###############################################################################
+# 5. Define number of components and keepX grid
+###############################################################################
+
+n_samples <- nrow(X_mat)
+n_snps <- ncol(X_mat)
+n_groups <- nlevels(group_vec)
+
+cat("Dataset summary:\n")
+cat("  Samples:", n_samples, "\n")
+cat("  SNPs before QC:", n_snps_before_qc, "\n")
+cat("  SNPs after QC:", n_snps_after_qc, "\n")
+cat("  Groups:", n_groups, "\n")
+cat("  Classes:", paste(levels(group_vec), collapse = ", "), "\n")
+
+# Maximum useful number of components.
+max_ncomp_auto <- min(5, n_groups - 1, n_samples - 1, n_snps)
+
+if (!is.na(max_ncomp_user)) {
+  max_ncomp <- min(max_ncomp_user, max_ncomp_auto)
+} else {
+  max_ncomp <- max_ncomp_auto
+}
+
+if (max_ncomp < 1) {
+  stop_msg("ERROR: invalid number of components.")
+}
+
+cat("Maximum number of components to test:", max_ncomp, "\n")
+
+# Adaptive keepX grid.
+candidate_keepX <- unique(c(
+  5, 10, 15, 20, 30, 40, 50, 75, 100, 150, 200, 300, 500, 800, 1000
+))
+
+candidate_keepX <- candidate_keepX[candidate_keepX < n_snps]
+
+if (length(candidate_keepX) == 0) {
+  # Fallback for small feature sets.
+  candidate_keepX <- unique(sort(
+    pmax(1, floor(c(0.05, 0.10, 0.20, 0.30, 0.50) * n_snps))
+  ))
+  candidate_keepX <- candidate_keepX[candidate_keepX < n_snps]
+}
+
+if (length(candidate_keepX) == 0) {
+  candidate_keepX <- unique(c(1, min(2, n_snps - 1), min(5, n_snps - 1)))
+  candidate_keepX <- candidate_keepX[candidate_keepX > 0 & candidate_keepX < n_snps]
+}
+
+if (length(candidate_keepX) == 0) {
+  stop_msg("ERROR: could not define a valid keepX grid.")
+}
+
+cat("keepX grid:\n")
+cat(" ", paste(candidate_keepX, collapse = ", "), "\n")
+
+###############################################################################
+# 6. Tune sPLS-DA model
+###############################################################################
+# BER = balanced error rate, which is more appropriate when classes are
+# imbalanced.
+
+min_class_size <- min(table(group_vec))
+folds_use <- min(folds_max, min_class_size)
+
+if (folds_use < 2) {
+  stop_msg(
+    "ERROR: at least one class has fewer than 2 samples. ",
+    "M-fold cross-validation cannot be run."
+  )
+}
+
+cat("Running tune.splsda()...\n")
+cat("  folds:", folds_use, "\n")
+cat("  nrepeat:", nrepeat, "\n")
+cat("  distance:", dist_method, "\n")
+
+tune_res <- mixOmics::tune.splsda(
+  X = X_mat,
+  Y = group_vec,
+  ncomp = max_ncomp,
+  test.keepX = candidate_keepX,
+  validation = "Mfold",
+  folds = folds_use,
+  nrepeat = nrepeat,
+  dist = dist_method,
+  measure = "BER",
+  progressBar = TRUE
+)
+
+saveRDS(tune_res, file.path(outdir, "r_objects", "tune_splsda.rds"))
+
+# Extract optimal choices.
+best_ncomp <- tune_res$choice.ncomp$ncomp
+best_keepX <- tune_res$choice.keepX[seq_len(best_ncomp)]
+
+cat("Best number of components:", best_ncomp, "\n")
+cat("Best keepX per component:", paste(best_keepX, collapse = ", "), "\n")
+
+choice_dt <- data.table(
+  best_ncomp = best_ncomp,
+  component = seq_len(best_ncomp),
+  best_keepX = best_keepX
+)
+
+write_tsv(choice_dt, file.path(outdir, "tables", "best_model_choices.tsv"))
+
+###############################################################################
+# 7. Fit final sPLS-DA model
+###############################################################################
+
+cat("Fitting final splsda() model...\n")
+
+final_model <- mixOmics::splsda(
+  X = X_mat,
+  Y = group_vec,
+  ncomp = best_ncomp,
+  keepX = best_keepX
+)
+
+saveRDS(final_model, file.path(outdir, "r_objects", "final_splsda_model.rds"))
+
+###############################################################################
+# 8. Evaluate final model performance
+###############################################################################
+
+cat("Running perf() for final model evaluation...\n")
+
+set.seed(42)
+
+perf_res <- mixOmics::perf(
+  final_model,
+  validation = "Mfold",
+  folds = folds_use,
+  nrepeat = nrepeat,
+  dist = dist_method,
+  progressBar = TRUE
+)
+
+saveRDS(perf_res, file.path(outdir, "r_objects", "perf_splsda.rds"))
+
+perf_table <- extract_error_table(perf_res, dist_method)
+write_tsv(perf_table, file.path(outdir, "tables", "performance_by_component.tsv"))
+
+###############################################################################
+# 9. Extract selected SNPs
+###############################################################################
+
+cat("Extracting selected SNPs by component...\n")
+
+selected_list <- list()
+loadings_mat <- final_model$loadings$X
+
+if (is.null(loadings_mat) || ncol(loadings_mat) == 0) {
+  warning("Could not access final_model$loadings$X. No SNPs will be exported.")
+  
+  selected_dt <- data.table(
+    component = integer(),
+    SNP = character(),
+    loading = numeric(),
+    abs_loading = numeric()
+  )
+  
+  selected_unique_dt <- copy(selected_dt)
+  
+  write_tsv(selected_dt, file.path(outdir, "tables", "selected_snps_by_component.tsv"))
+  write_tsv(selected_unique_dt, file.path(outdir, "tables", "selected_snps_unique.tsv"))
+  
+} else {
+  
+  for (comp in seq_len(min(best_ncomp, ncol(loadings_mat)))) {
+    comp_load <- loadings_mat[, comp]
+    
+    # Selected SNPs are those with non-zero loadings.
+    keep <- which(comp_load != 0)
+    
+    if (length(keep) > 0) {
+      dt <- data.table(
+        component = comp,
+        SNP = rownames(loadings_mat)[keep],
+        loading = comp_load[keep],
+        abs_loading = abs(comp_load[keep])
+      )
+      
+      dt <- dt[order(-abs_loading)]
+      selected_list[[paste0("comp", comp)]] <- dt
+    }
+  }
+  
+  if (length(selected_list) > 0) {
+    selected_dt <- rbindlist(selected_list, use.names = TRUE, fill = TRUE)
+    write_tsv(selected_dt, file.path(outdir, "tables", "selected_snps_by_component.tsv"))
+    
+    # Unique SNP table without duplicates, keeping the first occurrence.
+    selected_unique_dt <- selected_dt[order(component, -abs_loading)]
+    selected_unique_dt <- unique(selected_unique_dt, by = "SNP")
+    write_tsv(selected_unique_dt, file.path(outdir, "tables", "selected_snps_unique.tsv"))
+    
+  } else {
+    warning("No SNPs with non-zero loadings were found in the final model.")
+    
+    selected_dt <- data.table(
+      component = integer(),
+      SNP = character(),
+      loading = numeric(),
+      abs_loading = numeric()
+    )
+    
+    selected_unique_dt <- copy(selected_dt)
+    
+    write_tsv(selected_dt, file.path(outdir, "tables", "selected_snps_by_component.tsv"))
+    write_tsv(selected_unique_dt, file.path(outdir, "tables", "selected_snps_unique.tsv"))
+  }
+}
+
+###############################################################################
+# 10. Save sample scores
+###############################################################################
+
+cat("Saving sample scores...\n")
+
+variates_dt <- data.table(
+  sample = rownames(final_model$variates$X),
+  group = as.character(group_vec)
+)
+
+for (comp in seq_len(best_ncomp)) {
+  variates_dt[[paste0("comp", comp)]] <- final_model$variates$X[, comp]
+}
+
+write_tsv(variates_dt, file.path(outdir, "tables", "sample_scores.tsv"))
+
+###############################################################################
+# 11. Generate plots
+###############################################################################
+
+cat("Generating plots...\n")
+
+# BER by component.
+if (nrow(perf_table) > 0) {
+  perf_table[, comp_num := as.integer(gsub("comp", "", component))]
+  
+  p_ber <- ggplot(perf_table, aes(x = comp_num, y = BER)) +
+    geom_line() +
+    geom_point(size = 2) +
+    scale_x_continuous(breaks = perf_table$comp_num) +
+    labs(
+      title = "Balanced Error Rate by component",
+      x = "Number of components",
+      y = "BER"
+    ) +
+    theme_bw()
+  
+  ggsave(
+    filename = file.path(outdir, "plots", "ber_by_component.png"),
+    plot = p_ber,
+    width = 7,
+    height = 5,
+    dpi = 300
+  )
+}
+
+# Score plot: component 1 vs component 2.
+if (best_ncomp >= 2) {
+  p_scores_12 <- ggplot(variates_dt, aes(x = comp1, y = comp2, color = group)) +
+    geom_point(size = 2.5, alpha = 0.85) +
+    labs(
+      title = "sPLS-DA: components 1 vs 2",
+      x = "Component 1",
+      y = "Component 2",
+      color = "Group"
+    ) +
+    theme_bw()
+  
+  ggsave(
+    filename = file.path(outdir, "plots", "scores_comp1_vs_comp2.png"),
+    plot = p_scores_12,
+    width = 7,
+    height = 5.5,
+    dpi = 300
+  )
+}
+
+# Score plot: component 1 vs component 3.
+if (best_ncomp >= 3) {
+  p_scores_13 <- ggplot(variates_dt, aes(x = comp1, y = comp3, color = group)) +
+    geom_point(size = 2.5, alpha = 0.85) +
+    labs(
+      title = "sPLS-DA: components 1 vs 3",
+      x = "Component 1",
+      y = "Component 3",
+      color = "Group"
+    ) +
+    theme_bw()
+  
+  ggsave(
+    filename = file.path(outdir, "plots", "scores_comp1_vs_comp3.png"),
+    plot = p_scores_13,
+    width = 7,
+    height = 5.5,
+    dpi = 300
+  )
+}
+
+# Top absolute loadings by component.
+if (nrow(selected_dt) > 0) {
+  top_loadings_plot_dt <- selected_dt[, head(.SD, 20), by = component]
+  
+  p_load <- ggplot(
+    top_loadings_plot_dt,
+    aes(x = reorder(SNP, abs_loading), y = abs_loading)
+  ) +
+    geom_col() +
+    coord_flip() +
+    facet_wrap(~ component, scales = "free_y") +
+    labs(
+      title = "Top absolute loadings by component",
+      x = "SNP",
+      y = "|loading|"
+    ) +
+    theme_bw()
+  
+  ggsave(
+    filename = file.path(outdir, "plots", "top_loadings_by_component.png"),
+    plot = p_load,
+    width = 10,
+    height = 7,
+    dpi = 300
+  )
+}
+
+###############################################################################
+# 12. Final run summary
+###############################################################################
+
+summary_dt <- data.table(
+  n_samples = n_samples,
+  n_snps_before_qc = n_snps_before_qc,
+  n_snps_after_qc = n_snps_after_qc,
+  n_groups = n_groups,
+  group_levels = paste(levels(group_vec), collapse = ", "),
+  folds = folds_use,
+  nrepeat = nrepeat,
+  distance = dist_method,
+  max_ncomp_tested = max_ncomp,
+  best_ncomp = best_ncomp,
+  best_keepX = paste(best_keepX, collapse = ", ")
+)
+
+write_tsv(summary_dt, file.path(outdir, "tables", "run_summary.tsv"))
+
+cat("\nAnalysis completed successfully.\n")
+cat("Results saved in:", outdir, "\n")
+```
