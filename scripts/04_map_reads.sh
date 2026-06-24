@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -245,4 +244,3 @@ echo "Bowtie2 mapping completed."
 echo "SAM files: $OUTDIR/sam"
 echo "Logs:      $OUTDIR/logs"
 echo "Index:     $OUTDIR/index"
-```
