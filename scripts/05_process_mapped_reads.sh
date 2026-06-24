@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -670,4 +669,3 @@ echo "  ${LOG_DIR}/         -> duplicate-removal logs"
 echo "  ${QC_DIR}/          -> quickcheck and flagstat reports"
 echo "  ${SUMMARY_FILE}     -> unified tabular summary"
 echo "=================================================="
-```
