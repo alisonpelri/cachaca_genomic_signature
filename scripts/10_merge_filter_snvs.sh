@@ -1,4 +1,3 @@
-```bash id="d8nnd6"
 #!/usr/bin/env bash
 set -euo pipefail
 shopt -s nullglob
@@ -539,4 +538,3 @@ echo "Merge and filtering completed."
 echo "Merged VCF:        $MERGED_VCF_HOST"
 echo "Final filtered VCF: $FINAL_SNV_HOST"
 echo "Summary:           $SUMMARY_HOST"
-```
